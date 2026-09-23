@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wi-Fi Dynamic Surveillance System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Noto+Sans+JP:wght@400;600;800&display=swap');
+
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #090d16;
+            color: #38bdf8;
+            user-select: none;
+        }
+
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Scanline Overlay Effect */
+        .scanline-overlay {
+            background: linear-gradient(
+                to bottom,
+                rgba(255, 255, 255, 0),
+                rgba(255, 255, 255, 0) 50%,
+                rgba(0, 0, 0, 0.35) 50%,
+                rgba(0, 0, 0, 0.35)
+            );
+            background-size: 100% 4px;
+        }
+
+        /* Grid Background Pattern */
+        .bg-grid {
+            background-size: 24px 24px;
+            background-image: 
+                linear-gradient(to right, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+        }
+
+        /* Custom Glow Styling */
+        .glow-cyan {
+            box-shadow: 0 0 20px rgba(56, 189, 248, 0.15), inset 0 0 10px rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+        }
+
+        .glow-active {
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.25), inset 0 0 10px rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.6);
+        }
+
+        /* Pulse Animation for Scanning */
+        @keyframes radar-pulse {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.05); opacity: 0.3; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+
+        .animate-radar {
+            animation: radar-pulse 2s infinite ease-in-out;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 5px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0b1329;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1e3a8a;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #3b82f6;
+        }
+    </style>
+</head>
+<body class="bg-grid min-h-screen flex flex-col justify-between p-3 md:p-6 relative text-slate-200">
+
+    <!-- Application Header -->
+    <header class="w-full bg-slate-950/90 backdrop-blur-md border border-sky-500/30 rounded-xl p-4 mb-4 flex flex-wrap items-center justify-between gap-4 glow-cyan z-20">
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-lg bg-sky-950 border border-sky-500 flex items-center justify-center text-sky-400 text-xl font-bold">
+                <i class="fa-solid fa-satellite-dish animate-pulse"></i>
+            </div>
+            <div>
+                <h1 class="text-lg md:text-xl font-extrabold tracking-wider text-sky-400 font-mono">AUTONET SURVEILLANCE</h1>
+                <p class="text-xs text-sky-600 font-mono">AUTO-DISCOVERY P2P NETWORK SYSTEM</p>
+            </div>
+        </div>
+
+        <!-- Mode Selector Switch -->
+        <div class="flex bg-slate-900 border border-slate-800 rounded-lg p-1.5 space-x-1">
+            <button id="btnModeCam" onclick="switchDeviceMode('cam')" class="px-5 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 bg-sky-500 text-slate-950 shadow-lg shadow-sky-500/20">
+                <i class="fa-solid fa-video"></i> カメラ (送信側)
+            </button>
+            <button id="btnModeMon" onclick="switchDeviceMode('mon')" class="px-5 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 text-slate-400 hover:text-sky-300">
+                <i class="fa-solid fa-desktop"></i> モニター (受信用・操作不要)
+            </button>
+        </div>
+
+        <!-- Status & Network Stats -->
+        <div class="flex items-center space-x-4 font-mono text-xs">
+            <div class="flex items-center gap-2.5 bg-slate-900 border border-slate-800 px-3.5 py-2 rounded-lg">
+                <span id="statusIndicator" class="inline-block w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse"></span>
+                <span id="statusLabel" class="uppercase font-bold text-yellow-400 tracking-wider">初期化中...</span>
+            </div>
+            <div class="hidden lg:block text-right text-slate-400 text-[11px]">
+                <div>DEVICE ID: <span id="displayMyId" class="text-sky-400 font-bold">---</span></div>
+                <div>LOCAL NETWORK: ACTIVE</div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Dashboard Container -->
+    <main class="grid grid-cols-1 lg:grid-cols-4 gap-4 flex-1 z-10">
+        
+        <!-- Center / Left: Main Video Screen (Spans 3 Columns) -->
+        <section class="lg:col-span-3 flex flex-col gap-3">
+            <div id="videoContainer" class="relative bg-slate-950/95 rounded-2xl border border-sky-500/30 overflow-hidden flex-1 min-h-[380px] md:min-h-[520px] flex items-center justify-center glow-cyan group">
+                
+                <!-- Scanline Effect Overlay -->
+                <div class="scanline-overlay absolute inset-0 pointer-events-none z-10"></div>
+
+                <!-- Video Display Canvas -->
+                <video id="mainVideo" class="w-full h-full object-contain bg-black" autoplay playsinline muted></video>
+
+                <!-- Monitor Standby Overlay (Displayed when in Monitor mode waiting for camera stream) -->
+                <div id="monitorStandbyView" class="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-6 text-center z-20 hidden">
+                    <div class="relative mb-6">
+                        <div class="w-24 h-24 rounded-full border-2 border-sky-500/30 border-t-sky-400 animate-spin flex items-center justify-center"></div>
+                        <i class="fa-solid fa-tower-broadcast text-3xl text-sky-400 absolute inset-0 m-auto flex items-center justify-center animate-pulse"></i>
+                    </div>
+                    <h2 class="text-xl font-bold text-sky-300 tracking-wide mb-2">送信側（カメラ）からの映像要求を待機中</h2>
+                    <p class="text-xs text-slate-400 max-w-md leading-relaxed mb-6">
+                        この端末は<span class="text-sky-400 font-bold">全自動受信モード</span>で待機しています。<br>
+                        操作は一切不要です。カメラ側でこの端末が選択されると自動的に映像が再生されます。
+                    </p>
+                    <div class="flex items-center gap-3 bg-slate-900 border border-sky-900 px-4 py-2.5 rounded-lg text-xs font-mono">
+                        <span class="text-slate-400">端末識別名:</span>
+                        <span id="standbyDeviceName" class="text-emerald-400 font-bold">DETECTING...</span>
+                    </div>
+                </div>
+
+                <!-- HUD Status Overlays -->
+                <div class="absolute top-4 left-4 z-20 pointer-events-none flex flex-col gap-1.5 font-mono text-xs">
+                    <div class="flex items-center gap-2 bg-slate-900/80 border border-sky-500/40 px-3 py-1.5 rounded-lg backdrop-blur">
+                        <span id="liveBadge" class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
+                        <span id="streamStatusTag" class="font-bold text-slate-300">STANDBY</span>
+                    </div>
+                    <div id="resolutionTag" class="text-[10px] text-sky-400 bg-slate-900/60 border border-sky-900/50 px-2 py-0.5 rounded w-max">
+                        RES: 0x0
+                    </div>
+                </div>
+
+                <!-- HUD Top Right Stream Specs -->
+                <div class="absolute top-4 right-4 z-20 pointer-events-none text-right font-mono text-xs">
+                    <div class="bg-slate-900/80 border border-sky-500/40 px-3 py-1.5 rounded-lg backdrop-blur text-sky-300">
+                        FPS: <span id="fpsCounter">30</span> | MODE: <span id="hudModeDisplay">CAM</span>
+                    </div>
+                </div>
+
+                <!-- Target Reticle Overlay -->
+                <div class="absolute pointer-events-none opacity-20 flex items-center justify-center">
+                    <div class="w-48 h-48 border border-sky-400 rounded-full flex items-center justify-center">
+                        <div class="w-24 h-24 border border-sky-300 rounded-full"></div>
+                    </div>
+                    <div class="absolute w-64 h-[1px] bg-sky-400"></div>
+                    <div class="absolute h-64 w-[1px] bg-sky-400"></div>
+                </div>
+
+                <!-- Monitor Audio Unmute Prompt Banner -->
+                <div id="audioUnmuteBanner" class="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-30 bg-sky-500 text-slate-950 px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-3 shadow-lg shadow-sky-500/30 cursor-pointer hidden" onclick="enableAudioOutput()">
+                    <i class="fa-solid fa-volume-xmark text-base"></i>
+                    <span>画面をタップして音声出力を有効化してください</span>
+                </div>
+            </div>
+
+            <!-- Controls Toolbar -->
+            <div id="cameraControlsBar" class="bg-slate-950/90 border border-sky-500/30 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 glow-cyan">
+                <!-- Camera Devices & Microphones -->
+                <div class="flex items-center gap-2">
+                    <button onclick="toggleCameraFacing()" class="px-3.5 py-2 bg-slate-900 hover:bg-sky-950 border border-sky-800 text-sky-300 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                        <i class="fa-solid fa-camera-rotate"></i> イン/アウト切替
+                    </button>
+                    <button id="btnMicToggle" onclick="toggleMicrophone()" class="px-3.5 py-2 bg-slate-900 hover:bg-sky-950 border border-sky-800 text-sky-300 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                        <i class="fa-solid fa-microphone"></i> マイク: ON
+                    </button>
+                </div>
+
+                <!-- Video Resolution Selector -->
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-slate-400 font-bold">画質:</span>
+                    <select id="resSelect" onchange="changeResolution()" class="bg-slate-900 border border-sky-800 text-sky-300 text-xs rounded-lg px-2.5 py-2 font-mono focus:outline-none">
+                        <option value="720">720p (HD)</option>
+                        <option value="1080" selected>1080p (FHD)</option>
+                        <option value="480">480p (SD / 軽量)</option>
+                    </select>
+                </div>
+
+                <!-- Screen Controls -->
+                <div class="flex items-center gap-2">
+                    <button onclick="toggleFullscreen()" class="px-3.5 py-2 bg-slate-900 hover:bg-sky-950 border border-sky-800 text-sky-300 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                        <i class="fa-solid fa-expand"></i> フルスクリーン
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Column: Network Discovered Monitors List & Control Panel -->
+        <section class="flex flex-col gap-4">
+            
+            <!-- Camera Mode: Scanner & Discovered Monitors Panel -->
+            <div id="camPanelRight" class="bg-slate-950/90 border border-sky-500/30 rounded-xl p-4 glow-cyan flex flex-col flex-1 gap-3">
+                <div class="flex items-center justify-between border-b border-sky-900/80 pb-2">
+                    <h2 class="text-sm font-bold text-sky-400 flex items-center gap-2">
+                        <i class="fa-solid fa-network-wired"></i> 発見されたモニター端末
+                    </h2>
+                    <span id="scanBadge" class="text-[10px] bg-sky-950 border border-sky-800 text-sky-300 px-2 py-0.5 rounded-full font-mono">
+                        SCANNING...
+                    </span>
+                </div>
+
+                <p class="text-xs text-slate-400 leading-relaxed">
+                    同じWi-Fi内で開いているモニターを自動探知しています。送信したい端末を選択して「映像送信」を押してください。
+                </p>
+
+                <!-- Dynamic Devices List Container -->
+                <div id="deviceList" class="flex-1 space-y-2 overflow-y-auto max-h-[320px] min-h-[180px] pr-1">
+                    <div class="text-center py-8 text-slate-500 text-xs font-mono animate-pulse">
+                        <i class="fa-solid fa-spinner animate-spin text-lg mb-2 block text-sky-500"></i>
+                        同一ネットワーク内の端末を探索中...
+                    </div>
+                </div>
+
+                <!-- Manual Scan Refresh Button -->
+                <button onclick="triggerManualScan()" class="w-full bg-slate-900 hover:bg-sky-950 border border-sky-800 text-sky-300 text-xs font-bold py-2.5 rounded-lg transition flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-rotate-right"></i> 再スキャンを実行
+                </button>
+            </div>
+
+            <!-- Monitor Mode: Info Panel -->
+            <div id="monPanelRight" class="bg-slate-950/90 border border-sky-500/30 rounded-xl p-4 glow-cyan flex flex-col gap-3 hidden">
+                <h2 class="text-sm font-bold border-b border-sky-900/80 pb-2 text-sky-400 flex items-center gap-2">
+                    <i class="fa-solid fa-circle-info"></i> モニター待機ステータス
+                </h2>
+                <div class="space-y-2 text-xs text-slate-300">
+                    <div class="bg-slate-900 p-3 rounded-lg border border-slate-800">
+                        <div class="text-slate-400 text-[10px]">自端末ID:</div>
+                        <div id="myMonitorPeerId" class="text-sky-300 font-mono font-bold text-sm truncate">---</div>
+                    </div>
+                    <div class="bg-slate-900 p-3 rounded-lg border border-slate-800 leading-relaxed text-slate-400">
+                        <i class="fa-solid fa-circle-check text-emerald-400 mr-1"></i>
+                        カメラ側（送信端末）がこのIDを自動検出します。画面を開いたままお待ちください。
+                    </div>
+                </div>
+            </div>
+
+            <!-- Console Activity Log -->
+            <div class="bg-slate-950/90 border border-sky-500/30 rounded-xl p-3 glow-cyan flex flex-col min-h-[160px] max-h-[220px]">
+                <div class="flex items-center justify-between border-b border-sky-900/80 pb-1 mb-2">
+                    <span class="text-xs font-bold text-sky-400 font-mono"><i class="fa-solid fa-terminal mr-1"></i> NETWORK LOG</span>
+                    <button onclick="clearConsoleLog()" class="text-[10px] text-slate-500 hover:text-slate-300">クリア</button>
+                </div>
+                <div id="consoleLog" class="font-mono text-[11px] text-sky-500/90 space-y-1 overflow-y-auto flex-1 pr-1">
+                    <div>[SYS] システムを起動しました。</div>
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <script>
+        // Prefix used for local room discovery on public signaling server
+        const ROOM_PREFIX = "WIFI_CAM_SURVEILLANCE_PREFIX_";
+        const TOTAL_SCAN_SLOTS = 10; // Number of peer channels to probe (0-9)
+
+        // State Variables
+        let currentMode = 'cam'; // 'cam' | 'mon'
+        let peer = null;
+        let myAssignedId = "";
+        let assignedSlot = -1;
+        let activeCall = null;
+        let localStream = null;
+        
+        let cameraFacing = "environment"; // "user" or "environment"
+        let isMicEnabled = true;
+        let targetResolution = 1080;
+
+        let discoveredMonitors = {}; // Slot -> Peer ID mapping
+        let scanInterval = null;
+
+        // DOM Elements
+        const mainVideo = document.getElementById('mainVideo');
+        const statusLabel = document.getElementById('statusLabel');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const displayMyId = document.getElementById('displayMyId');
+        const consoleLog = document.getElementById('consoleLog');
+        const deviceList = document.getElementById('deviceList');
+
+        window.addEventListener('DOMContentLoaded', () => {
+            logSystem('ローカルネットワーク探知エンジンを初期化中...');
+            switchDeviceMode('cam');
+        });
+
+        // Logger Function
+        function logSystem(msg, type = 'info') {
+            const time = new Date().toTimeString().split(' ')[0];
+            const div = document.createElement('div');
+            let color = 'text-sky-400';
+            if (type === 'success') color = 'text-emerald-400';
+            if (type === 'warn') color = 'text-yellow-400';
+            if (type === 'error') color = 'text-red-400';
+
+            div.className = `${color} leading-tight`;
+            div.innerText = `[${time}] ${msg}`;
+            consoleLog.appendChild(div);
+            consoleLog.scrollTop = consoleLog.scrollHeight;
+        }
+
+        function clearConsoleLog() {
+            consoleLog.innerHTML = '';
+        }
+
+        function updateStatus(text, state) {
+            statusLabel.innerText = text;
+            statusLabel.className = "uppercase font-bold tracking-wider ";
+            statusIndicator.className = "inline-block w-2.5 h-2.5 rounded-full ";
+
+            if (state === 'ok') {
+                statusLabel.classList.add('text-emerald-400');
+                statusIndicator.classList.add('bg-emerald-500', 'animate-pulse');
+            } else if (state === 'connecting') {
+                statusLabel.classList.add('text-yellow-400');
+                statusIndicator.classList.add('bg-yellow-500', 'animate-pulse');
+            } else if (state === 'error') {
+                statusLabel.classList.add('text-red-400');
+                statusIndicator.classList.add('bg-red-500', 'animate-ping');
+            } else {
+                statusLabel.classList.add('text-sky-400');
+                statusIndicator.classList.add('bg-sky-500');
+            }
+        }
+
+        // Mode Switching
+        function switchDeviceMode(mode) {
+            if (currentMode === mode && peer) return;
+            currentMode = mode;
+
+            const btnCam = document.getElementById('btnModeCam');
+            const btnMon = document.getElementById('btnModeMon');
+            const camPanelRight = document.getElementById('camPanelRight');
+            const monPanelRight = document.getElementById('monPanelRight');
+            const monitorStandbyView = document.getElementById('monitorStandbyView');
+            const cameraControlsBar = document.getElementById('cameraControlsBar');
+            const hudModeDisplay = document.getElementById('hudModeDisplay');
+
+            if (mode === 'cam') {
+                btnCam.className = "px-5 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 bg-sky-500 text-slate-950 shadow-lg shadow-sky-500/20";
+                btnMon.className = "px-5 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 text-slate-400 hover:text-sky-300";
+                camPanelRight.classList.remove('hidden');
+                monPanelRight.classList.add('hidden');
+                monitorStandbyView.classList.add('hidden');
+                cameraControlsBar.classList.remove('hidden');
+                hudModeDisplay.innerText = "CAMERA";
+                logSystem("モード切り替え: カメラ (送信側)");
+
+                stopCurrentMedia();
+                initCameraStreamAndPeer();
+            } else {
+                btnMon.className = "px-5 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 bg-sky-500 text-slate-950 shadow-lg shadow-sky-500/20";
+                btnCam.className = "px-5 py-2 rounded-md text-xs font-bold transition-all flex items-center gap-2 text-slate-400 hover:text-sky-300";
+                monPanelRight.classList.remove('hidden');
+                camPanelRight.classList.add('hidden');
+                monitorStandbyView.classList.remove('hidden');
+                cameraControlsBar.classList.add('hidden');
+                hudModeDisplay.innerText = "MONITOR";
+                logSystem("モード切り替え: モニター (受信専用・全自動ハンズフリー)");
+
+                stopCurrentMedia();
+                initMonitorPeer();
+            }
+        }
+
+        // Initialize Camera Media and Register Peer ID
+        async function initCameraStreamAndPeer() {
+            updateStatus("カメラ起動中...", "connecting");
+            try {
+                const heightConstraint = targetResolution === 1080 ? { ideal: 1080 } : (targetResolution === 720 ? { ideal: 720 } : { ideal: 480 });
+                
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: cameraFacing, height: heightConstraint },
+                    audio: isMicEnabled
+                });
+
+                mainVideo.srcObject = localStream;
+                mainVideo.muted = true; // Avoid feedback on camera device
+                
+                document.getElementById('streamStatusTag').innerText = "LIVE (SENDING)";
+                document.getElementById('liveBadge').className = "w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse";
+                logSystem("ローカルカメラ映像の生成に成功。", "success");
+
+                registerCameraPeer();
+
+            } catch (err) {
+                logSystem(`カメラアクセスエラー: ${err.message}`, "error");
+                updateStatus("カメラ取得失敗", "error");
+            }
+        }
+
+        // Register PeerJS for Camera (Random ID)
+        function registerCameraPeer() {
+            if (peer) peer.destroy();
+
+            peer = new Peer(null, { debug: 1 });
+
+            peer.on('open', (id) => {
+                myAssignedId = id;
+                displayMyId.innerText = id;
+                updateStatus("探索待機中", "ok");
+                logSystem(`カメラ登録完了 ID: ${id}`, "success");
+
+                // Start auto-scanning for available monitors
+                startMonitorDiscoveryScan();
+            });
+
+            peer.on('error', (err) => {
+                logSystem(`通信エラー: ${err.type}`, "error");
+            });
+        }
+
+        // Initialize Monitor Mode (Auto-Claim Channel Slot)
+        function initMonitorPeer(slotIndex = 0) {
+            if (peer) peer.destroy();
+            updateStatus("チャンネル取得中...", "connecting");
+
+            const candidateId = `${ROOM_PREFIX}SLOT_${slotIndex}`;
+
+            // Try registering designated channel slot
+            peer = new Peer(candidateId, { debug: 0 });
+
+            peer.on('open', (id) => {
+                myAssignedId = id;
+                assignedSlot = slotIndex;
+                displayMyId.innerText = id;
+                document.getElementById('myMonitorPeerId').innerText = id;
+                document.getElementById('standbyDeviceName').innerText = `MONITOR-DEVICE-SLOT-${slotIndex + 1}`;
+                updateStatus("受信待機中 [自動]", "ok");
+                logSystem(`モニター登録完了! スロット [${slotIndex + 1}] を確保しました。`, "success");
+
+                setupMonitorIncomingListener();
+            });
+
+            peer.on('error', (err) => {
+                // Slot occupied, try next slot index
+                if (err.type === 'unavailable-id') {
+                    if (slotIndex < TOTAL_SCAN_SLOTS - 1) {
+                        initMonitorPeer(slotIndex + 1);
+                    } else {
+                        logSystem("利用可能な空きモジュールスロットがありません。", "error");
+                        updateStatus("スロット満杯", "error");
+                    }
+                } else {
+                    logSystem(`モニターP2Pエラー: ${err.type}`, "error");
+                }
+            });
+        }
+
+        // Monitor Listening for Incoming Stream Call from Camera
+        function setupMonitorIncomingListener() {
+            peer.on('call', (call) => {
+                logSystem("送信側カメラから自動接続リクエストを受信！", "warn");
+                updateStatus("映像受信中", "ok");
+
+                // Answer the call with no stream
+                call.answer();
+
+                call.on('stream', (remoteStream) => {
+                    document.getElementById('monitorStandbyView').classList.add('hidden');
+                    mainVideo.srcObject = remoteStream;
+                    mainVideo.muted = false;
+
+                    // Play video automatically
+                    mainVideo.play().then(() => {
+                        logSystem("カメラ映像の自動再生を開始しました。", "success");
+                    }).catch(e => {
+                        logSystem("自動再生ポリシー制限: 画面タップで音声が解除されます。", "warn");
+                        document.getElementById('audioUnmuteBanner').classList.remove('hidden');
+                    });
+
+                    document.getElementById('streamStatusTag').innerText = "LIVE (RECEIVING)";
+                    document.getElementById('liveBadge').className = "w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse";
+                });
+
+                call.on('close', () => {
+                    logSystem("カメラとの接続が切断されました。", "warn");
+                    document.getElementById('monitorStandbyView').classList.remove('hidden');
+                    updateStatus("受信待機中 [自動]", "ok");
+                    mainVideo.srcObject = null;
+                });
+
+                activeCall = call;
+            });
+        }
+
+        // Enable audio on user interaction if browser muted autoplay
+        function enableAudioOutput() {
+            mainVideo.muted = false;
+            mainVideo.play();
+            document.getElementById('audioUnmuteBanner').classList.add('hidden');
+            logSystem("音声出力をアクティブ化しました。", "success");
+        }
+
+        // Camera Mode: Active Auto-Scanner for Monitors
+        function startMonitorDiscoveryScan() {
+            if (scanInterval) clearInterval(scanInterval);
+
+            triggerManualScan();
+            // Auto scan every 6 seconds
+            scanInterval = setInterval(triggerManualScan, 6000);
+        }
+
+        function triggerManualScan() {
+            if (currentMode !== 'cam' || !peer) return;
+
+            document.getElementById('scanBadge').innerText = "SCANNING...";
+            document.getElementById('scanBadge').className = "text-[10px] bg-yellow-950 border border-yellow-800 text-yellow-300 px-2 py-0.5 rounded-full font-mono animate-pulse";
+
+            let foundCount = 0;
+            const updatedDiscovered = {};
+
+            let pendingChecks = TOTAL_SCAN_SLOTS;
+
+            for (let i = 0; i < TOTAL_SCAN_SLOTS; i++) {
+                const targetSlotId = `${ROOM_PREFIX}SLOT_${i}`;
+
+                // Probe channel using data connection
+                const conn = peer.connect(targetSlotId, { reliable: false });
+
+                const timeout = setTimeout(() => {
+                    conn.close();
+                    checkComplete();
+                }, 1200);
+
+                conn.on('open', () => {
+                    clearTimeout(timeout);
+                    foundCount++;
+                    updatedDiscovered[i] = targetSlotId;
+                    conn.close();
+                    checkComplete();
+                });
+
+                conn.on('error', () => {
+                    clearTimeout(timeout);
+                    checkComplete();
+                });
+            }
+
+            function checkComplete() {
+                pendingChecks--;
+                if (pendingChecks <= 0) {
+                    discoveredMonitors = updatedDiscovered;
+                    renderDeviceList();
+                    document.getElementById('scanBadge').innerText = `FOUND: ${Object.keys(discoveredMonitors).length}`;
+                    document.getElementById('scanBadge').className = "text-[10px] bg-sky-950 border border-sky-800 text-sky-300 px-2 py-0.5 rounded-full font-mono";
+                }
+            }
+        }
+
+        // Render Discovered Devices in GUI List
+        function renderDeviceList() {
+            const keys = Object.keys(discoveredMonitors);
+
+            if (keys.length === 0) {
+                deviceList.innerHTML = `
+                    <div class="text-center py-8 text-slate-500 text-xs font-mono">
+                        <i class="fa-solid fa-radar text-2xl mb-2 block text-sky-900 animate-radar"></i>
+                        待機中のモニター端末が見つかりません<br>
+                        <span class="text-[10px] text-slate-600">別端末でこのアプリを開き「モニター」を選択してください</span>
+                    </div>
+                `;
+                return;
+            }
+
+            deviceList.innerHTML = '';
+            keys.forEach(slotIdx => {
+                const peerId = discoveredMonitors[slotIdx];
+                const card = document.createElement('div');
+                card.className = "bg-slate-900 hover:bg-slate-800 border border-sky-900/60 p-3 rounded-xl flex items-center justify-between gap-3 transition group";
+
+                card.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-lg bg-sky-950 border border-sky-800 flex items-center justify-center text-sky-400">
+                            <i class="fa-solid fa-desktop"></i>
+                        </div>
+                        <div>
+                            <div class="text-xs font-bold text-sky-300 font-mono">MONITOR-SLOT-${parseInt(slotIdx) + 1}</div>
+                            <div class="text-[10px] text-slate-500 font-mono truncate max-w-[120px]">${peerId}</div>
+                        </div>
+                    </div>
+                    <button onclick="pushStreamToMonitor('${peerId}')" class="px-3 py-1.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs rounded-lg transition shadow-md shadow-sky-500/20 flex items-center gap-1.5">
+                        <i class="fa-solid fa-paper-plane"></i> 映像送信
+                    </button>
+                `;
+                deviceList.appendChild(card);
+            });
+        }
+
+        // Push Camera Stream to Target Monitor ID
+        function pushStreamToMonitor(targetPeerId) {
+            if (!localStream) {
+                alert("カメラ映像が初期化されていません。");
+                return;
+            }
+
+            logSystem(`対象モニター [${targetPeerId}] へ映像をプッシュ発信中...`, "warn");
+            updateStatus("送信試行中...", "connecting");
+
+            if (activeCall) activeCall.close();
+
+            const call = peer.call(targetPeerId, localStream);
+
+            call.on('open', () => {
+                logSystem(`モニター [${targetPeerId}] との通信接続が正常完了！`, "success");
+                updateStatus("通信中 [送信中]", "ok");
+            });
+
+            call.on('error', (err) => {
+                logSystem(`映像送信失敗: ${err.message}`, "error");
+                updateStatus("送信エラー", "error");
+            });
+
+            activeCall = call;
+        }
+
+        function stopCurrentMedia() {
+            if (scanInterval) clearInterval(scanInterval);
+            if (activeCall) activeCall.close();
+            if (localStream) {
+                localStream.getTracks().forEach(t => t.stop());
+                localStream = null;
+            }
+            mainVideo.srcObject = null;
+        }
+
+        async function toggleCameraFacing() {
+            cameraFacing = (cameraFacing === "user") ? "environment" : "user";
+            logSystem(`カメラを切り替えました: ${cameraFacing}`);
+            await initCameraStreamAndPeer();
+        }
+
+        function toggleMicrophone() {
+            isMicEnabled = !isMicEnabled;
+            if (localStream) {
+                localStream.getAudioTracks().forEach(t => t.enabled = isMicEnabled);
+            }
+            const btn = document.getElementById('btnMicToggle');
+            btn.innerHTML = isMicEnabled ? `<i class="fa-solid fa-microphone"></i> マイク: ON` : `<i class="fa-solid fa-microphone-slash"></i> マイク: OFF`;
+            logSystem(`マイク機能: ${isMicEnabled ? '有効' : 'ミュート'}`);
+        }
+
+        async function changeResolution() {
+            targetResolution = parseInt(document.getElementById('resSelect').value);
+            logSystem(`解像度変更要求: ${targetResolution}p`);
+            await initCameraStreamAndPeer();
+        }
+
+        function toggleFullscreen() {
+            const container = document.getElementById('videoContainer');
+            if (!document.fullscreenElement) {
+                container.requestFullscreen().catch(err => {
+                    alert(`フルスクリーン表示エラー: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        // Monitor FPS / Resolution Stats Loop
+        setInterval(() => {
+            if (mainVideo && mainVideo.videoWidth) {
+                document.getElementById('resolutionTag').innerText = `RES: ${mainVideo.videoWidth}x${mainVideo.videoHeight}`;
+            }
+        }, 2000);
+    </script>
+</body>
+</html>
